@@ -4,3 +4,7 @@ package.json.backup
 *.log 
 gipigo-41931-firebase-adminsdk-fbsvc-837615255f.json 
 *.json 
+"gipigo-41931-firebase-adminsdk-fbsvc-837615255f.json" 
+"*.json" 
+".env" 
+"node_modules/" 
