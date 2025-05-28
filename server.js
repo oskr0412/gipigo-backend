@@ -45,23 +45,23 @@ app.post('/notify-new-order', async (req, res) => {
 
     // 1. Obtener todos los tokens de repartidores activos desde Firestore
     const db = admin.firestore();
-    
+
     // *** NUEVO: Debugging detallado ***
     console.log('🔍 Iniciando búsqueda de repartidores...');
-    
+
     // Primero buscar TODOS los usuarios con rol Repartidor (sin filtro de estado)
     const todosRepartidores = await db.collection('Users')
       .where('rol', '==', 'REPARTIDOR')  // *** CAMBIADO A MAYÚSCULAS ***
       .get();
-    
+
     console.log(`🔍 Total de usuarios con rol "REPARTIDOR": ${todosRepartidores.size}`);
-    
+
     if (todosRepartidores.empty) {
       console.log('❌ No se encontraron usuarios con rol "REPARTIDOR"');
       console.log('💡 Verifica que el campo "rol" sea exactamente "REPARTIDOR" (todo en mayúsculas)');
       return res.status(404).send({ message: 'No se encontraron repartidores en el sistema' });
     }
-    
+
     // Mostrar información detallada de cada repartidor
     todosRepartidores.forEach((doc, index) => {
       const data = doc.data();
@@ -76,13 +76,13 @@ app.post('/notify-new-order', async (req, res) => {
       }
       console.log('');
     });
-    
+
     // Ahora buscar específicamente los repartidores activos
     const repartidoresSnapshot = await db.collection('Users')
       .where('rol', '==', 'REPARTIDOR')  // *** CAMBIADO A MAYÚSCULAS ***
       .where('estado', '==', 'Activo')
       .get();
-    
+
     console.log(`🔍 Repartidores con estado "Activo": ${repartidoresSnapshot.size}`);
 
     if (repartidoresSnapshot.empty) {
@@ -101,7 +101,7 @@ app.post('/notify-new-order', async (req, res) => {
       console.log(`🔍 Procesando repartidor ${doc.id}:`);
       console.log(`   - Nombre: ${data.nombre || 'Sin nombre'}`);
       console.log(`   - FCM Token presente: ${data.fcmToken ? 'SÍ' : 'NO'}`);
-      
+
       if (data.fcmToken && data.fcmToken.trim() !== '') {
         // Limpiar el token de comillas extra
         const cleanToken = data.fcmToken.replace(/['"]/g, '');
@@ -144,13 +144,13 @@ app.post('/notify-new-order', async (req, res) => {
         notification: {
           channelId: 'orders_channel',
           priority: 'high',
-          sound: 'default',
+          sound: 'notification',
         },
       },
       apns: {
         payload: {
           aps: {
-            sound: 'default',
+            sound: 'notification.wav',
             badge: 1,
           },
         },
@@ -159,17 +159,17 @@ app.post('/notify-new-order', async (req, res) => {
 
     // 4. Enviar notificaciones (compatible con versiones más antiguas de Firebase Admin)
     console.log(`🚀 Iniciando envío de notificaciones a ${tokens.length} repartidores...`);
-    
+
     let totalSuccess = 0;
     let totalFailure = 0;
-    
+
     // Enviar a cada token individualmente usando el método más básico
     for (let i = 0; i < tokens.length; i++) {
       const token = tokens[i];
-      
+
       try {
         console.log(`📤 Enviando notificación ${i + 1}/${tokens.length} a token: ${token.substring(0, 30)}...`);
-        
+
         // Usar el método más básico: send() con estructura legacy
         const legacyMessage = {
           notification: {
@@ -179,17 +179,17 @@ app.post('/notify-new-order', async (req, res) => {
           data: message.data || {},
           token: token,
         };
-        
+
         // Usar send() en lugar de sendMessage()
         const response = await admin.messaging().send(legacyMessage);
-        
+
         console.log(`✅ Notificación ${i + 1} enviada exitosamente. ID: ${response}`);
         totalSuccess++;
-        
+
       } catch (error) {
         console.error(`❌ Error enviando notificación ${i + 1}:`, error.code || error.message);
         totalFailure++;
-        
+
         // Log más detallado del error
         if (error.code) {
           console.error(`   - Código de error: ${error.code}`);
@@ -199,7 +199,7 @@ app.post('/notify-new-order', async (req, res) => {
         }
       }
     }
-    
+
     console.log(`📊 Resumen final:`);
     console.log(`   ✅ Exitosos: ${totalSuccess}`);
     console.log(`   ❌ Fallidos: ${totalFailure}`);
@@ -220,9 +220,9 @@ app.post('/notify-new-order', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Error al notificar nueva orden:', error);
-    res.status(500).send({ 
-      error: 'Error al enviar notificaciones de nueva orden', 
-      details: error.toString() 
+    res.status(500).send({
+      error: 'Error al enviar notificaciones de nueva orden',
+      details: error.toString()
     });
   }
 });
@@ -252,9 +252,9 @@ app.post('/send-notification', async (req, res) => {
   try {
     const response = await admin.messaging().sendMulticast(message);
     console.log('Respuesta de FCM:', response);
-    res.send({ 
-      message: `Notificaciones enviadas: ${response.successCount}/${cleanedTokens.length}`, 
-      response 
+    res.send({
+      message: `Notificaciones enviadas: ${response.successCount}/${cleanedTokens.length}`,
+      response
     });
   } catch (error) {
     console.error('Error al enviar la notificación:', error);
