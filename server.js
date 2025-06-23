@@ -2,8 +2,33 @@ const admin = require('firebase-admin');
 const express = require('express');
 const bodyParser = require('body-parser');
 
-// Configuración de Firebase usando archivo local
-const serviceAccount = require('./gipigo-41931-firebase-adminsdk-fbsvc-837615255f.json');
+// 🔥 NUEVO: Configuración de Firebase usando variables de entorno
+let serviceAccount;
+
+if (process.env.NODE_ENV === 'production') {
+  // En producción (Render), usar variables de entorno
+  serviceAccount = {
+    type: "service_account",
+    project_id: process.env.FIREBASE_PROJECT_ID,
+    private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
+    private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'), // Convertir \\n a saltos de línea reales
+    client_email: process.env.FIREBASE_CLIENT_EMAIL,
+    client_id: process.env.FIREBASE_CLIENT_ID,
+    auth_uri: "https://accounts.google.com/o/oauth2/auth",
+    token_uri: "https://oauth2.googleapis.com/token",
+    auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+    client_x509_cert_url: process.env.FIREBASE_CLIENT_X509_CERT_URL
+  };
+} else {
+  // En desarrollo local, usar archivo JSON
+  try {
+    serviceAccount = require('./gipigo-41931-firebase-adminsdk-fbsvc-837615255f.json');
+  } catch (error) {
+    console.error('❌ Archivo de credenciales de Firebase no encontrado en desarrollo');
+    console.error('💡 Asegúrate de tener el archivo JSON en la raíz del proyecto para desarrollo local');
+    process.exit(1);
+  }
+}
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -17,7 +42,12 @@ app.use(express.urlencoded({ extended: true }));
 
 // Endpoint GET para verificar el estado del servidor
 app.get('/status', (req, res) => {
-  res.status(200).send({ message: 'Servidor Gípigo en línea y funcionando correctamente desde servidor local!' });
+  const environment = process.env.NODE_ENV || 'development';
+  res.status(200).send({ 
+    message: `Servidor Gípigo en línea y funcionando correctamente desde ${environment}!`,
+    environment: environment,
+    timestamp: new Date().toISOString()
+  });
 });
 
 // ENDPOINT: Notificar nueva orden a todos los repartidores
@@ -110,11 +140,11 @@ app.post('/notify-new-order', async (req, res) => {
 
     console.log(`📱 Enviando notificación a ${tokens.length} repartidores`);
 
-    //Preparar el precio correctamente
+    // 3. FIX: Preparar el precio correctamente
     const precioMostrar = ordenData.precio || ordenData.precioCalculado || '0.00';
     console.log(`💰 Precio a mostrar en notificación: ${precioMostrar}`);
 
-    //Preparar el mensaje de notificación con icono personalizado
+    // 4. UPDATED: Preparar el mensaje de notificación con icono personalizado
     const message = {
       notification: {
         title: '🚚 Nueva Orden Disponible',
@@ -137,8 +167,8 @@ app.post('/notify-new-order', async (req, res) => {
           channelId: 'orders_channel',
           priority: 'high',
           sound: 'notification',
-          icon: '@drawable/ic_notification', 
-          color: '#2196F3', 
+          icon: '@drawable/ic_notification',
+          color: '#2196F3',
         },
       },
       apns: {
@@ -171,8 +201,8 @@ app.post('/notify-new-order', async (req, res) => {
           },
           data: message.data || {},
           token: token,
-          android: message.android, 
-          apns: message.apns, 
+          android: message.android,
+          apns: message.apns,
         };
 
         const response = await admin.messaging().send(legacyMessage);
@@ -207,7 +237,7 @@ app.post('/notify-new-order', async (req, res) => {
         exitosos: totalSuccess,
         fallidos: totalFailure,
         orden: ordenData.numero_orden,
-        precio_enviado: precioMostrar 
+        precio_enviado: precioMostrar
       }
     });
 
@@ -220,7 +250,7 @@ app.post('/notify-new-order', async (req, res) => {
   }
 });
 
-// Endpoint original para notificaciones genéricas (también actualizado)
+// Endpoint original para notificaciones genéricas
 app.post('/send-notification', async (req, res) => {
   const { registrationTokens, title, body, data } = req.body;
 
@@ -240,7 +270,7 @@ app.post('/send-notification', async (req, res) => {
     tokens: cleanedTokens,
     android: {
       notification: {
-        icon: '@drawable/ic_notification', 
+        icon: '@drawable/ic_notification',
         color: '#2196F3',
       },
     },
@@ -264,4 +294,5 @@ app.post('/send-notification', async (req, res) => {
 app.listen(port, () => {
   console.log(`Servidor Gípigo escuchando en el puerto ${port}`);
   console.log(`Estado del servidor: http://localhost:${port}/status`);
+  console.log(`Entorno: ${process.env.NODE_ENV || 'development'}`);
 });
