@@ -50,8 +50,11 @@ app.get('/status', (req, res) => {
   });
 });
 
-// ENDPOINT: Notificar nueva orden a todos los repartidores
+// ENDPOINT: Notificar nueva orden a repartidores Y administradores
 app.post('/notify-new-order', async (req, res) => {
+  console.log('🔔 === NUEVA PETICIÓN DE NOTIFICACIÓN ===');
+  console.log('🔔 Timestamp:', new Date().toISOString());
+  
   const { ordenData } = req.body;
 
   if (!ordenData) {
@@ -59,108 +62,109 @@ app.post('/notify-new-order', async (req, res) => {
   }
 
   try {
-    console.log('🟢 Iniciando notificación de nueva orden:', ordenData.numero_orden);
+    console.log('🔔 Orden recibida:', ordenData.numero_orden);
+    console.log('🔔 Cliente:', ordenData.cliente_nombre);
+    console.log('🔔 Precio:', ordenData.precio);
 
-    // 1. Obtener todos los tokens de repartidores activos desde Firestore
     const db = admin.firestore();
 
-    // Debugging detallado
-    console.log('🔍 Iniciando búsqueda de repartidores...');
-
-    // Primero buscar TODOS los usuarios con rol Repartidor (sin filtro de estado)
-    const todosRepartidores = await db.collection('Users')
-      .where('rol', '==', 'REPARTIDOR')
-      .get();
-
-    console.log(`🔍 Total de usuarios con rol "REPARTIDOR": ${todosRepartidores.size}`);
-
-    if (todosRepartidores.empty) {
-      console.log('❌ No se encontraron usuarios con rol "REPARTIDOR"');
-      console.log('💡 Verifica que el campo "rol" sea exactamente "REPARTIDOR" (todo en mayúsculas)');
-      return res.status(404).send({ message: 'No se encontraron repartidores en el sistema' });
-    }
-
-    // Mostrar información detallada de cada repartidor
-    todosRepartidores.forEach((doc, index) => {
-      const data = doc.data();
-      console.log(`👤 Repartidor ${index + 1}:`);
-      console.log(`   - ID: ${doc.id}`);
-      console.log(`   - Nombre: ${data.nombre || 'Sin nombre'}`);
-      console.log(`   - Rol: "${data.rol}"`);
-      console.log(`   - Estado: "${data.estado}"`);
-      console.log(`   - Tiene fcmToken: ${data.fcmToken ? 'SÍ' : 'NO'}`);
-      if (data.fcmToken) {
-        console.log(`   - FCM Token (primeros 20 chars): ${data.fcmToken.substring(0, 20)}...`);
-      }
-      console.log('');
-    });
-
-    // Ahora buscar específicamente los repartidores activos
+    // 1. Obtener repartidores activos
+    console.log('🔍 Buscando repartidores activos...');
     const repartidoresSnapshot = await db.collection('Users')
       .where('rol', '==', 'REPARTIDOR')
       .where('estado', '==', 'Activo')
       .get();
 
-    console.log(`🔍 Repartidores con estado "Activo": ${repartidoresSnapshot.size}`);
+    // 2. Obtener administradores (todos, sin importar estado)
+    console.log('🔍 Buscando administradores...');
+    const administradoresSnapshot = await db.collection('Users')
+      .where('rol', '==', 'ADMINISTRADOR')
+      .get();
 
-    if (repartidoresSnapshot.empty) {
-      console.log('⚠️ No se encontraron repartidores con estado "Activo"');
-      console.log('💡 Verifica que:');
-      console.log('   1. Los repartidores hayan hecho login');
-      console.log('   2. El campo "estado" sea exactamente "Activo" (con A mayúscula)');
-      console.log('   3. No haya espacios extra en el valor del estado');
-      return res.status(404).send({ message: 'No hay repartidores activos disponibles' });
-    }
+    console.log(`📊 Repartidores activos encontrados: ${repartidoresSnapshot.size}`);
+    console.log(`📊 Administradores encontrados: ${administradoresSnapshot.size}`);
 
-    // 2. Extraer tokens FCM válidos
-    const tokens = [];
+    // 3. Recopilar tokens de repartidores
+    const repartidorTokens = [];
     repartidoresSnapshot.forEach(doc => {
       const data = doc.data();
-      console.log(`🔍 Procesando repartidor ${doc.id}:`);
-      console.log(`   - Nombre: ${data.nombre || 'Sin nombre'}`);
-      console.log(`   - FCM Token presente: ${data.fcmToken ? 'SÍ' : 'NO'}`);
-
+      console.log(`👤 Repartidor: ${data.nombre || 'Sin nombre'}`);
+      console.log(`   - UID: ${doc.id}`);
+      console.log(`   - Estado: ${data.estado}`);
+      console.log(`   - Tiene FCM Token: ${data.fcmToken ? 'SÍ' : 'NO'}`);
+      
       if (data.fcmToken && data.fcmToken.trim() !== '') {
-        // Limpiar el token de comillas extra
         const cleanToken = data.fcmToken.replace(/['"]/g, '');
-        console.log(`   - Token limpio (primeros 50 chars): ${cleanToken.substring(0, 50)}...`);
-        tokens.push(cleanToken);
-        console.log(`   ✅ Token agregado (total: ${tokens.length})`);
+        repartidorTokens.push({
+          token: cleanToken,
+          nombre: data.nombre || 'Sin nombre',
+          uid: doc.id,
+          tipo: 'REPARTIDOR'
+        });
+        console.log(`   ✅ Token agregado`);
       } else {
-        console.log(`   ❌ Token FCM inválido o vacío`);
+        console.log(`   ❌ Token FCM inválido`);
       }
     });
 
-    console.log(`📱 Total de tokens FCM válidos recolectados: ${tokens.length}`);
+    // 4. Recopilar tokens de administradores
+    const adminTokens = [];
+    administradoresSnapshot.forEach(doc => {
+      const data = doc.data();
+      console.log(`👑 Administrador: ${data.nombre || 'Sin nombre'}`);
+      console.log(`   - UID: ${doc.id}`);
+      console.log(`   - Estado: ${data.estado || 'Sin estado'}`);
+      console.log(`   - Tiene FCM Token: ${data.fcmToken ? 'SÍ' : 'NO'}`);
+      
+      if (data.fcmToken && data.fcmToken.trim() !== '') {
+        const cleanToken = data.fcmToken.replace(/['"]/g, '');
+        adminTokens.push({
+          token: cleanToken,
+          nombre: data.nombre || 'Sin nombre',
+          uid: doc.id,
+          tipo: 'ADMINISTRADOR'
+        });
+        console.log(`   ✅ Token agregado`);
+      } else {
+        console.log(`   ❌ Token FCM inválido`);
+      }
+    });
 
-    if (tokens.length === 0) {
-      console.log('❌ No se encontraron tokens FCM válidos');
-      return res.status(404).send({ message: 'No hay repartidores con tokens FCM válidos' });
+    const todosLosTokens = [...repartidorTokens, ...adminTokens];
+    console.log(`📊 Total tokens a enviar: ${todosLosTokens.length}`);
+
+    if (todosLosTokens.length === 0) {
+      console.log('⚠️ No hay tokens válidos para enviar');
+      return res.json({
+        message: 'No hay usuarios con tokens FCM válidos',
+        stats: {
+          total_repartidores: repartidorTokens.length,
+          total_administradores: adminTokens.length,
+          repartidores_exitosos: 0,
+          repartidores_fallidos: 0,
+          admin_exitosos: 0,
+          admin_fallidos: 0,
+          total: 0
+        }
+      });
     }
 
-    console.log(`📱 Enviando notificación a ${tokens.length} repartidores`);
-
-    // 3. FIX: Preparar el precio correctamente
+    // 5. Preparar el precio
     const precioMostrar = ordenData.precio || ordenData.precioCalculado || '0.00';
     console.log(`💰 Precio a mostrar en notificación: ${precioMostrar}`);
 
-    // 4. UPDATED: Preparar el mensaje de notificación con icono personalizado
-    const message = {
+    // 6. Preparar mensajes diferentes para repartidores y administradores
+    const mensajeRepartidores = {
       notification: {
         title: '🚚 Nueva Orden Disponible',
         body: `Orden ${ordenData.numero_orden} - ${ordenData.cliente_nombre} - €${precioMostrar}`,
       },
       data: {
         type: 'nueva_orden',
-        orden_id: ordenData.numero_orden,
+        orden_id: ordenData.numero_orden || '',
         cliente_nombre: ordenData.cliente_nombre || '',
         precio: precioMostrar.toString(),
-        distancia: ordenData.distanciaPedido?.toString() || '0',
-        duracion: ordenData.duracionEstimadaMinutos?.toString() || '0',
-        direccion_calle: ordenData.direccion?.calle || '',
-        direccion_numero: ordenData.direccion?.numero || '',
-        direccion_ciudad: ordenData.direccion?.ciudad || '',
-        click_action: 'FLUTTER_NOTIFICATION_CLICK',
+        click_action: 'FLUTTER_NOTIFICATION_CLICK'
       },
       android: {
         notification: {
@@ -170,84 +174,98 @@ app.post('/notify-new-order', async (req, res) => {
           icon: '@drawable/ic_notification',
           color: '#2196F3',
         },
-      },
-      apns: {
-        payload: {
-          aps: {
-            sound: 'notification.wav',
-            badge: 1,
-          },
-        },
-      },
+      }
     };
 
-    // 5. Enviar notificaciones
-    console.log(`🚀 Iniciando envío de notificaciones a ${tokens.length} repartidores...`);
+    const mensajeAdministradores = {
+      notification: {
+        title: '👑 Admin: Nueva Orden',
+        body: `${ordenData.numero_orden} - €${precioMostrar} - ${ordenData.cliente_nombre} - ${repartidorTokens.length} repartidores activos`,
+      },
+      data: {
+        type: 'nueva_orden_admin',
+        orden_id: ordenData.numero_orden || '',
+        cliente_nombre: ordenData.cliente_nombre || '',
+        precio: precioMostrar.toString(),
+        repartidores_activos: repartidorTokens.length.toString(),
+        click_action: 'FLUTTER_NOTIFICATION_CLICK'
+      },
+      android: {
+        notification: {
+          channelId: 'orders_channel',
+          priority: 'high',
+          sound: 'notification',
+          icon: '@drawable/ic_notification',
+          color: '#FF9800', // Color diferente para admin
+        },
+      }
+    };
 
-    let totalSuccess = 0;
-    let totalFailure = 0;
+    // 7. Enviar notificaciones
+    let repartidoresExitosos = 0;
+    let repartidoresFallidos = 0;
+    let adminExitosos = 0;
+    let adminFallidos = 0;
 
-    // Enviar a cada token individualmente
-    for (let i = 0; i < tokens.length; i++) {
-      const token = tokens[i];
-
+    console.log(`🚀 Enviando a ${repartidorTokens.length} repartidores...`);
+    for (const tokenInfo of repartidorTokens) {
       try {
-        console.log(`📤 Enviando notificación ${i + 1}/${tokens.length} a token: ${token.substring(0, 30)}...`);
-
-        const legacyMessage = {
-          notification: {
-            title: message.notification.title,
-            body: message.notification.body,
-          },
-          data: message.data || {},
-          token: token,
-          android: message.android,
-          apns: message.apns,
-        };
-
-        const response = await admin.messaging().send(legacyMessage);
-
-        console.log(`✅ Notificación ${i + 1} enviada exitosamente. ID: ${response}`);
-        totalSuccess++;
-
+        const response = await admin.messaging().send({
+          token: tokenInfo.token,
+          ...mensajeRepartidores
+        });
+        console.log(`✅ Repartidor ${tokenInfo.nombre}: Enviado (${response})`);
+        repartidoresExitosos++;
       } catch (error) {
-        console.error(`❌ Error enviando notificación ${i + 1}:`, error.code || error.message);
-        totalFailure++;
-
-        if (error.code) {
-          console.error(`   - Código de error: ${error.code}`);
-        }
-        if (error.message) {
-          console.error(`   - Mensaje: ${error.message}`);
-        }
+        console.log(`❌ Repartidor ${tokenInfo.nombre}: Error - ${error.message}`);
+        repartidoresFallidos++;
       }
     }
 
-    console.log(`📊 Resumen final:`);
-    console.log(`   ✅ Exitosos: ${totalSuccess}`);
-    console.log(`   ❌ Fallidos: ${totalFailure}`);
-    console.log(`   📱 Total: ${tokens.length}`);
-    console.log(`   💰 Precio enviado: €${precioMostrar}`);
-
-    // 6. Enviar respuesta con estadísticas
-    res.send({
-      message: 'Notificaciones de nueva orden enviadas',
-      stats: {
-        total_repartidores: tokens.length,
-        exitosos: totalSuccess,
-        fallidos: totalFailure,
-        orden: ordenData.numero_orden,
-        precio_enviado: precioMostrar
+    console.log(`👑 Enviando a ${adminTokens.length} administradores...`);
+    for (const tokenInfo of adminTokens) {
+      try {
+        const response = await admin.messaging().send({
+          token: tokenInfo.token,
+          ...mensajeAdministradores
+        });
+        console.log(`✅ Admin ${tokenInfo.nombre}: Enviado (${response})`);
+        adminExitosos++;
+      } catch (error) {
+        console.log(`❌ Admin ${tokenInfo.nombre}: Error - ${error.message}`);
+        adminFallidos++;
       }
+    }
+
+    // 8. Estadísticas finales
+    const estadisticas = {
+      total_repartidores: repartidorTokens.length,
+      total_administradores: adminTokens.length,
+      repartidores_exitosos: repartidoresExitosos,
+      repartidores_fallidos: repartidoresFallidos,
+      admin_exitosos: adminExitosos,
+      admin_fallidos: adminFallidos,
+      total: repartidoresExitosos + adminExitosos,
+      orden: ordenData.numero_orden,
+      precio_enviado: precioMostrar
+    };
+
+    console.log('📊 Estadísticas finales:', estadisticas);
+
+    res.json({
+      message: 'Notificaciones de nueva orden enviadas',
+      stats: estadisticas
     });
 
   } catch (error) {
-    console.error('❌ Error al notificar nueva orden:', error);
-    res.status(500).send({
-      error: 'Error al enviar notificaciones de nueva orden',
-      details: error.toString()
+    console.error('❌ Error enviando notificaciones:', error);
+    res.status(500).json({ 
+      error: 'Error interno del servidor',
+      details: error.message 
     });
   }
+
+  console.log('🔔 === FIN PETICIÓN ===');
 });
 
 // Endpoint original para notificaciones genéricas
