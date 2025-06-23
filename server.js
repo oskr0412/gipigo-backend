@@ -2,21 +2,9 @@ const admin = require('firebase-admin');
 const express = require('express');
 const bodyParser = require('body-parser');
 
-// **Asegúrate de que esta ruta sea correcta**
-// **Configuración de Firebase usando variables de entorno**
-const serviceAccount = {
-  type: process.env.FIREBASE_TYPE,
-  project_id: process.env.FIREBASE_PROJECT_ID,
-  private_key_id: process.env.FIREBASE_PRIVATE_KEY_ID,
-  private_key: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-  client_email: process.env.FIREBASE_CLIENT_EMAIL,
-  client_id: process.env.FIREBASE_CLIENT_ID,
-  auth_uri: process.env.FIREBASE_AUTH_URI,
-  token_uri: process.env.FIREBASE_TOKEN_URI,
-  auth_provider_x509_cert_url: process.env.FIREBASE_AUTH_PROVIDER_CERT_URL,
-  client_x509_cert_url: process.env.FIREBASE_CLIENT_CERT_URL,
-  universe_domain: "googleapis.com"
-};
+// Configuración de Firebase usando archivo local
+const serviceAccount = require('./gipigo-41931-firebase-adminsdk-fbsvc-837615255f.json');
+
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
@@ -27,12 +15,12 @@ const port = process.env.PORT || 3000;
 app.use(bodyParser.json());
 app.use(express.urlencoded({ extended: true }));
 
-// **Endpoint GET para verificar el estado del servidor**
+// Endpoint GET para verificar el estado del servidor
 app.get('/status', (req, res) => {
-  res.status(200).send({ message: 'Servidor Gígigo en línea y funcionando correctamente desde Cagua!' });
+  res.status(200).send({ message: 'Servidor Gípigo en línea y funcionando correctamente desde servidor local!' });
 });
 
-// **NUEVO ENDPOINT: Notificar nueva orden a todos los repartidores**
+// ENDPOINT: Notificar nueva orden a todos los repartidores
 app.post('/notify-new-order', async (req, res) => {
   const { ordenData } = req.body;
 
@@ -46,12 +34,12 @@ app.post('/notify-new-order', async (req, res) => {
     // 1. Obtener todos los tokens de repartidores activos desde Firestore
     const db = admin.firestore();
 
-    // *** NUEVO: Debugging detallado ***
+    // Debugging detallado
     console.log('🔍 Iniciando búsqueda de repartidores...');
 
     // Primero buscar TODOS los usuarios con rol Repartidor (sin filtro de estado)
     const todosRepartidores = await db.collection('Users')
-      .where('rol', '==', 'REPARTIDOR')  // *** CAMBIADO A MAYÚSCULAS ***
+      .where('rol', '==', 'REPARTIDOR')
       .get();
 
     console.log(`🔍 Total de usuarios con rol "REPARTIDOR": ${todosRepartidores.size}`);
@@ -79,7 +67,7 @@ app.post('/notify-new-order', async (req, res) => {
 
     // Ahora buscar específicamente los repartidores activos
     const repartidoresSnapshot = await db.collection('Users')
-      .where('rol', '==', 'REPARTIDOR')  // *** CAMBIADO A MAYÚSCULAS ***
+      .where('rol', '==', 'REPARTIDOR')
       .where('estado', '==', 'Activo')
       .get();
 
@@ -122,17 +110,21 @@ app.post('/notify-new-order', async (req, res) => {
 
     console.log(`📱 Enviando notificación a ${tokens.length} repartidores`);
 
-    // 3. Preparar el mensaje de notificación
+    //Preparar el precio correctamente
+    const precioMostrar = ordenData.precio || ordenData.precioCalculado || '0.00';
+    console.log(`💰 Precio a mostrar en notificación: ${precioMostrar}`);
+
+    //Preparar el mensaje de notificación con icono personalizado
     const message = {
       notification: {
         title: '🚚 Nueva Orden Disponible',
-        body: `Orden ${ordenData.numero_orden} - ${ordenData.cliente_nombre} - €${ordenData.precio}`,
+        body: `Orden ${ordenData.numero_orden} - ${ordenData.cliente_nombre} - €${precioMostrar}`,
       },
       data: {
         type: 'nueva_orden',
         orden_id: ordenData.numero_orden,
         cliente_nombre: ordenData.cliente_nombre || '',
-        precio: ordenData.precio?.toString() || '0',
+        precio: precioMostrar.toString(),
         distancia: ordenData.distanciaPedido?.toString() || '0',
         duracion: ordenData.duracionEstimadaMinutos?.toString() || '0',
         direccion_calle: ordenData.direccion?.calle || '',
@@ -145,6 +137,8 @@ app.post('/notify-new-order', async (req, res) => {
           channelId: 'orders_channel',
           priority: 'high',
           sound: 'notification',
+          icon: '@drawable/ic_notification', 
+          color: '#2196F3', 
         },
       },
       apns: {
@@ -157,20 +151,19 @@ app.post('/notify-new-order', async (req, res) => {
       },
     };
 
-    // 4. Enviar notificaciones (compatible con versiones más antiguas de Firebase Admin)
+    // 5. Enviar notificaciones
     console.log(`🚀 Iniciando envío de notificaciones a ${tokens.length} repartidores...`);
 
     let totalSuccess = 0;
     let totalFailure = 0;
 
-    // Enviar a cada token individualmente usando el método más básico
+    // Enviar a cada token individualmente
     for (let i = 0; i < tokens.length; i++) {
       const token = tokens[i];
 
       try {
         console.log(`📤 Enviando notificación ${i + 1}/${tokens.length} a token: ${token.substring(0, 30)}...`);
 
-        // Usar el método más básico: send() con estructura legacy
         const legacyMessage = {
           notification: {
             title: message.notification.title,
@@ -178,9 +171,10 @@ app.post('/notify-new-order', async (req, res) => {
           },
           data: message.data || {},
           token: token,
+          android: message.android, 
+          apns: message.apns, 
         };
 
-        // Usar send() en lugar de sendMessage()
         const response = await admin.messaging().send(legacyMessage);
 
         console.log(`✅ Notificación ${i + 1} enviada exitosamente. ID: ${response}`);
@@ -190,7 +184,6 @@ app.post('/notify-new-order', async (req, res) => {
         console.error(`❌ Error enviando notificación ${i + 1}:`, error.code || error.message);
         totalFailure++;
 
-        // Log más detallado del error
         if (error.code) {
           console.error(`   - Código de error: ${error.code}`);
         }
@@ -204,17 +197,17 @@ app.post('/notify-new-order', async (req, res) => {
     console.log(`   ✅ Exitosos: ${totalSuccess}`);
     console.log(`   ❌ Fallidos: ${totalFailure}`);
     console.log(`   📱 Total: ${tokens.length}`);
+    console.log(`   💰 Precio enviado: €${precioMostrar}`);
 
-    // 5. Enviar respuesta con estadísticas
-    console.log(`🎯 Resumen final: ${totalSuccess} exitosos, ${totalFailure} fallidos de ${tokens.length} total`);
-
+    // 6. Enviar respuesta con estadísticas
     res.send({
       message: 'Notificaciones de nueva orden enviadas',
       stats: {
         total_repartidores: tokens.length,
         exitosos: totalSuccess,
         fallidos: totalFailure,
-        orden: ordenData.numero_orden
+        orden: ordenData.numero_orden,
+        precio_enviado: precioMostrar 
       }
     });
 
@@ -227,7 +220,7 @@ app.post('/notify-new-order', async (req, res) => {
   }
 });
 
-// **Endpoint original para notificaciones genéricas**
+// Endpoint original para notificaciones genéricas (también actualizado)
 app.post('/send-notification', async (req, res) => {
   const { registrationTokens, title, body, data } = req.body;
 
@@ -244,7 +237,13 @@ app.post('/send-notification', async (req, res) => {
       body: body,
     },
     data: data || {},
-    tokens: cleanedTokens, // Usar todos los tokens
+    tokens: cleanedTokens,
+    android: {
+      notification: {
+        icon: '@drawable/ic_notification', 
+        color: '#2196F3',
+      },
+    },
   };
 
   console.log('Mensaje a enviar:', JSON.stringify(message, null, 2));
@@ -263,5 +262,6 @@ app.post('/send-notification', async (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Servidor escuchando en el puerto ${port}`);
+  console.log(`Servidor Gípigo escuchando en el puerto ${port}`);
+  console.log(`Estado del servidor: http://localhost:${port}/status`);
 });
